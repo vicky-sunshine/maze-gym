@@ -8,8 +8,9 @@ Since I focus on building env first, so the learnining algorithm and run script 
 
 ```shell
 # python 3.6
-numpy==1.14.3
 gym==0.10.5
+numpy==1.14.3
+pandas==0.23.0
 ```
 
 ## Maze map
