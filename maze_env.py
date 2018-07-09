@@ -2,7 +2,7 @@ import gym
 import numpy as np
 import time
 
-MAZE_MAP_PATH = "maze_map/maze44.csv"
+MAZE_MAP_PATH = "maze_map/maze10.csv"
 
 
 class Maze(gym.Env):
@@ -11,6 +11,8 @@ class Maze(gym.Env):
         self.action_space = ['up', 'down', 'right', 'left']
         self.n_actions = len(self.action_space)
         self._build_maze()
+        self.n_features = self.MAZE_H * self.MAZE_W
+        print(self.n_features)
 
     def _build_maze(self):
         self.maze = np.genfromtxt(MAZE_MAP_PATH, delimiter=',', dtype='int32')
@@ -23,9 +25,13 @@ class Maze(gym.Env):
 
     def _reset(self):
         self._build_maze()
-        return self.user_loc
+        self.step_num = 0
+        next_maze_state = np.copy(self.maze)
+        next_maze_state[self.user_loc[0]][self.user_loc[1]] = 1
+        return next_maze_state.reshape(1, self.MAZE_H*self.MAZE_W)
 
     def _step(self, action):
+        self.step_num += 1
         user_loc_next = self.user_loc
 
         print("choose action: " + str(self.action_space[action]))
@@ -44,26 +50,28 @@ class Maze(gym.Env):
             print("=====================> Goal")
             reward = 1
             done = True
-            s_ = 'terminal'
         elif self.maze[user_loc_next[0]][user_loc_next[1]] == 2:
             # jmp to hole
             reward = -1
             done = True
-            s_ = 'terminal'
         else:
-            s_ = user_loc_next
             reward = 0
             done = False
-            self.user_loc = user_loc_next
-        return s_, reward, done
+
+        self.user_loc = user_loc_next
+        next_maze_state = np.copy(self.maze)
+        next_maze_state[user_loc_next[0]][user_loc_next[1]] = 1
+        next_maze_state = next_maze_state.reshape(1, self.MAZE_H*self.MAZE_W)
+
+        return next_maze_state, reward, done
 
     def _render(self):
-        maze_next = np.copy(self.maze)
-        maze_next[self.user_loc[0]][self.user_loc[1]] = 1
-        print(maze_next)
-        print("user loc: " + str(self.user_loc))
+        next_maze_state = np.copy(self.maze)
+        next_maze_state[self.user_loc[0]][self.user_loc[1]] = 1
+        print('step: ' + str(self.step_num))
+        print(next_maze_state)
         print("======")
-        time.sleep(0.2)
+        # time.sleep(0.2)
 
 if __name__ == '__main__':
     env = Maze()
