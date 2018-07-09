@@ -17,9 +17,9 @@ def run_maze():
             action = model.choose_action(step, observation)
 
             # model take action and get next observation and reward
-            observation_, reward, done = env._step(action)
+            observation_, reward, continue_ = env._step(action)
 
-            model.store_transition(observation, action, reward, observation_)
+            model.store_transition(observation, action, reward, observation_, continue_)
 
             if (step > 1000) and (step % 5 == 0):
                 model.learn()
@@ -28,7 +28,7 @@ def run_maze():
             observation = observation_
 
             # break while loop when end of this episode
-            if done:
+            if continue_ == 0:
                 break
             step += 1
 
@@ -50,10 +50,10 @@ if __name__ == "__main__":
                          save_trainee_iter=2000,
                          memory_size=10000,
                          eps_min=0.1,
-                         eps_max=0.6,    # the higher, more random
+                         eps_max=0.9,    # the higher, more random
                          eps_decay_steps=2000000,
                          checkpoint_path="checkpoint/maze.ckpt",
-                         # output_graph=True
+                         output_graph=True
                          )
     run_maze()
     # model.plot_cost()

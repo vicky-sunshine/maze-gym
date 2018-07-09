@@ -12,7 +12,6 @@ class Maze(gym.Env):
         self.n_actions = len(self.action_space)
         self._build_maze()
         self.n_features = self.MAZE_H * self.MAZE_W
-        print(self.n_features)
 
     def _build_maze(self):
         self.maze = np.genfromtxt(MAZE_MAP_PATH, delimiter=',', dtype='int32')
@@ -49,21 +48,21 @@ class Maze(gym.Env):
             # get treasure
             print("=====================> Goal")
             reward = 1
-            done = True
+            continue_ = 0
         elif self.maze[user_loc_next[0]][user_loc_next[1]] == 2:
             # jmp to hole
             reward = -1
-            done = True
+            continue_ = 0
         else:
             reward = 0
-            done = False
+            continue_ = 1
 
         self.user_loc = user_loc_next
         next_maze_state = np.copy(self.maze)
         next_maze_state[user_loc_next[0]][user_loc_next[1]] = 1
         next_maze_state = next_maze_state.reshape(1, self.MAZE_H*self.MAZE_W)
 
-        return next_maze_state, reward, done
+        return next_maze_state, reward, continue_
 
     def _render(self):
         next_maze_state = np.copy(self.maze)

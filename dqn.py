@@ -56,7 +56,7 @@ class DeepQNetwork:
 
         if output_graph:
             # $ tensorboard --logdir=logs
-            tf.summary.FileWriter("logs/", self.sess.graph)
+            tf.summary.FileWriter("dqn-logs/", self.sess.graph)
 
         self.cost_his = []
 
@@ -93,8 +93,8 @@ class DeepQNetwork:
         # training
         with tf.variable_scope('q_coach'):
             q_coach = self.r + self.gamma * \
-                      tf.reduce_max(self.q_coach_output, axis=1,
-                                    name='Qmax_s_')
+                tf.reduce_max(self.q_coach_output, axis=1,
+                              name='Qmax_s_')
         with tf.variable_scope('q_trainee'):
             q_trainee = tf.reduce_sum(self.q_trainee_output * tf.one_hot(self.a, self.n_actions),
                                       axis=1, keepdims=True)
@@ -110,19 +110,23 @@ class DeepQNetwork:
         with tf.variable_scope('soft_replacement'):
             self.coach_replace_op = [tf.assign(c, t) for c, t in zip(coach_params, trainee_params)]
 
-    def store_transition(self, s, a, r, s_):
+    def store_transition(self, s, a, r, s_, continue_):
         # store transiyion to replay memory
-        self.replay_memory.append((s, a, r, s_))
+        self.replay_memory.append((s, a, r, s_, continue_))
 
     def sample_memories(self, batch_size):
-        # sample batch_size memory for trainee network
-        cols = [[], [], [], []]  # state, action, reward, next_state
+        cols = [[], [], [], [], []]  # state, action, reward, next_state, continue
         for memory in self.replay_memory.sample(batch_size):
             for col, value in zip(cols, memory):
                 col.append(value)
         cols = [np.array(col) for col in cols]
-        # return s, a, r, s_
-        return cols[0].reshape(-1, self.n_features), cols[1], cols[2], cols[3].reshape(-1, self.n_features)
+
+        s = cols[0].reshape(-1, self.n_features)
+        a = cols[1]
+        rewards = cols[2]
+        s_ = cols[3].reshape(-1, self.n_features)
+        continues = cols[4].reshape(-1, 1)
+        return s, a, rewards, s_, continues
 
     def choose_action(self, step, observation):
         # epsilon-greedy policy
@@ -148,7 +152,7 @@ class DeepQNetwork:
             self.save_parameter()
             print('\ntrainee_params_saved\n')
 
-        X_state_val, X_action_val, rewards, X_next_state_val = (
+        X_state_val, X_action_val, rewards, X_next_state_val, continues = (
             self.sample_memories(self.batch_size))
         _, cost = self.sess.run(
             [self._train_op, self.loss],
@@ -193,4 +197,3 @@ class ReplayMemory:
         else:
             indices = np.random.permutation(self.length)[:batch_size]
         return self.buf[indices]
-
