@@ -2,8 +2,6 @@
 
 Learn how to build a open AI gym enviroment.
 
-Since I focus on building env first, so the learnining algorithm and run script is currently from [learning maze of MorvanZhou](https://github.com/MorvanZhou/Reinforcement-learning-with-tensorflow/tree/master/contents/2_Q_Learning_maze).
-
 ## Environment
 
 ```shell
