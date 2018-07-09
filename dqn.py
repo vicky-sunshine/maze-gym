@@ -44,13 +44,6 @@ class DeepQNetwork:
 
         # consist of [trainee_network, evaluate_net]
         self._build_dqn()
-
-        trainee_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='trainee_network')
-        coach_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='coach_network')
-
-        with tf.variable_scope('soft_replacement'):
-            self.coach_replace_op = [tf.assign(c, t) for t, c in zip(coach_params, trainee_params)]
-
         self.sess = tf.Session()
 
         self.checkpoint_path = checkpoint_path
@@ -93,10 +86,10 @@ class DeepQNetwork:
         self.a = tf.placeholder(tf.int32, shape=[None, ], name='a')  # input Action
 
         # build network
-        self.q_coach_output, _ = self._build_net(self.s_, 'coach',
-                                                 self.n_features, self.n_actions)
-        self.q_trainee_output, _ = self._build_net(self.s, 'trainee',
-                                                   self.n_features, self.n_actions)
+        self.q_coach_output, coach_params = self._build_net(self.s_, 'coach',
+                                                            self.n_features, self.n_actions)
+        self.q_trainee_output, trainee_params = self._build_net(self.s, 'trainee',
+                                                                self.n_features, self.n_actions)
 
         with tf.variable_scope('q_coach'):
             q_coach = self.r + self.gamma * \
@@ -110,9 +103,10 @@ class DeepQNetwork:
             clipped_error = tf.clip_by_value(error, 0.0, 1.0)
             linear_error = 2 * (error - clipped_error)
             self.loss = tf.reduce_mean(tf.square(clipped_error) + linear_error)
-
         with tf.variable_scope('train'):
             self._train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
+        with tf.variable_scope('soft_replacement'):
+            self.coach_replace_op = [tf.assign(c, t) for c, t in zip(coach_params, trainee_params)]
 
     def store_transition(self, s, a, r, s_):
         # store transiyion to replay memory
@@ -137,7 +131,8 @@ class DeepQNetwork:
             action = np.random.randint(0, self.n_actions)
         else:
             # use coach network to choose action
-            actions_value = self.sess.run(self.q_coach_output, feed_dict={self.s_: observations})
+            actions_value = self.sess.run(self.q_coach_output, feed_dict={
+                                          self.s_: observation})
             action = np.argmax(actions_value)
 
         return action
@@ -169,6 +164,13 @@ class DeepQNetwork:
 
     def save_parameter(self):
         self.saver.save(self.sess, self.checkpoint_path)
+
+    def plot_cost(self):
+        import matplotlib.pyplot as plt
+        plt.plot(np.arange(len(self.cost_his)), self.cost_his)
+        plt.ylabel('Cost')
+        plt.xlabel('training steps')
+        plt.show()
 
 
 class ReplayMemory:
