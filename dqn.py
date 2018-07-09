@@ -60,10 +60,11 @@ class DeepQNetwork:
 
         self.cost_his = []
 
-    def _build_net(self, x_state, scope, n_observation, n_action):
+    def _build_net(self, scope, n_observation, n_action):
         w_initializer = tf.variance_scaling_initializer()
         b_initializer = tf.zeros_initializer()
         with tf.variable_scope(scope):
+            x_state = tf.placeholder(tf.float32, shape=[None, self.n_features], name='s')
             l1 = tf.layers.dense(inputs=x_state, units=60, activation=tf.nn.relu,
                                  kernel_initializer=w_initializer,
                                  bias_initializer=b_initializer, name='l1')
@@ -75,26 +76,25 @@ class DeepQNetwork:
                                       bias_initializer=b_initializer, name='outputs')
             trainable_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
                                                scope=scope)
-        return outputs, trainable_vars
+        return x_state, outputs, trainable_vars
 
     # return outputs
     def _build_dqn(self):
         # all inputs
-        self.s = tf.placeholder(tf.float32, shape=[None, self.n_features], name='s')  # input State
-        self.s_ = tf.placeholder(tf.float32, shape=[None, self.n_features], name='s_')  # input Next State
         self.r = tf.placeholder(tf.float32, shape=[None, ], name='r')  # input Reward
         self.a = tf.placeholder(tf.int32, shape=[None, ], name='a')  # input Action
 
         # build network
-        self.q_coach_output, coach_params = self._build_net(self.s_, 'coach',
-                                                            self.n_features, self.n_actions)
-        self.q_trainee_output, trainee_params = self._build_net(self.s, 'trainee',
-                                                                self.n_features, self.n_actions)
+        self.coach_state_input, self.q_coach_output, coach_params = self._build_net(
+            'coach', self.n_features, self.n_actions)
+        self.trainee_state_input, self.q_trainee_output, trainee_params = self._build_net(
+            'trainee', self.n_features, self.n_actions)
 
+        # training
         with tf.variable_scope('q_coach'):
             q_coach = self.r + self.gamma * \
                       tf.reduce_max(self.q_coach_output, axis=1,
-                                    name='Qmax_s_')    # shape=(None, )            # shape=(None, )
+                                    name='Qmax_s_')
         with tf.variable_scope('q_trainee'):
             q_trainee = tf.reduce_sum(self.q_trainee_output * tf.one_hot(self.a, self.n_actions),
                                       axis=1, keepdims=True)
@@ -105,6 +105,8 @@ class DeepQNetwork:
             self.loss = tf.reduce_mean(tf.square(clipped_error) + linear_error)
         with tf.variable_scope('train'):
             self._train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
+
+        # replace
         with tf.variable_scope('soft_replacement'):
             self.coach_replace_op = [tf.assign(c, t) for c, t in zip(coach_params, trainee_params)]
 
@@ -132,7 +134,7 @@ class DeepQNetwork:
         else:
             # use coach network to choose action
             actions_value = self.sess.run(self.q_coach_output, feed_dict={
-                                          self.s_: observation})
+                                          self.coach_state_input: observation})
             action = np.argmax(actions_value)
 
         return action
@@ -151,10 +153,10 @@ class DeepQNetwork:
         _, cost = self.sess.run(
             [self._train_op, self.loss],
             feed_dict={
-                self.s: X_state_val,
+                self.trainee_state_input: X_state_val,
                 self.a: X_action_val,
                 self.r: rewards,
-                self.s_: X_next_state_val,
+                self.coach_state_input: X_next_state_val,
             })
 
         self.cost_his.append(cost)
