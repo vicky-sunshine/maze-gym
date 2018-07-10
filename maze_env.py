@@ -2,7 +2,7 @@ import gym
 import numpy as np
 import time
 
-MAZE_MAP_PATH = "maze_map/maze10.csv"
+MAZE_MAP_PATH = "maze_map/maze44_1.csv"
 
 
 class Maze(gym.Env):
