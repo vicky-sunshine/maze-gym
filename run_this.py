@@ -1,40 +1,43 @@
+import numpy as np
 from maze_env import Maze
 from dqn import DeepQNetwork
 
 
-def run_maze():
-    step = 0
-    episode = 0
-    for episode in range(5000):
-        # initial observation
-        observation = env._reset()
+def run_maze(n_episode, training_start, training_interval):
+    global_step = 0
+
+    for episode in range(n_episode):
+        state = env.reset()
+        local_step = 0
+        total_max_q = 0
+        mean_max_q = 0.0
+        loss_val = np.infty
 
         while True:
-            # fresh env
-            env._render()
+            local_step += 1
+            global_step += 1
 
-            # model choose action based on observation
-            action = model.choose_action(step, observation)
+            # Online DQN evaluates what to do
+            action, max_q_values = model.choose_action(state, global_step)
 
-            # model take action and get next observation and reward
-            observation_, reward, continue_ = env._step(action)
+            # Online DQN plays
+            next_state, reward, done = env.step(action)
+            env.render()
 
-            model.store_transition(observation, action, reward, observation_, continue_)
+            # Let's memorize what happened
+            model.replay_memory.append((state, action, reward, next_state, 1.0 - done))
+            state = next_state
+            total_max_q += max_q_values
+            mean_max_q = total_max_q / local_step
 
-            if (step > 1000) and (step % 5 == 0):
-                model.learn()
+            if (global_step > training_start) and (global_step % training_interval == 0):
+                loss_val = model.learn(global_step)
 
-            # swap observation
-            observation = observation_
+            print("\rGlobal step {}\tEpisode {}\tlocal_step {}\tLoss {:5f}\tMean Max-Q {:5f}\taction {}\n".format(
+                global_step, episode, local_step, loss_val, mean_max_q, env.action_space[action]), end="")
 
-            # break while loop when end of this episode
-            if continue_ == 0:
+            if done:
                 break
-            step += 1
-
-        # episode += 1
-        print("episode: "+str(episode))
-
     # end of game
     print('game over')
 
@@ -42,18 +45,22 @@ def run_maze():
 if __name__ == "__main__":
     # maze game
     env = Maze()
-    model = DeepQNetwork(env.n_actions, env.n_features,
-                         batch_size=64,
+    model = DeepQNetwork(n_observation=env.n_features,
+                         n_action=env.n_actions,
                          learning_rate=0.01,
-                         reward_decay=0.9,
-                         replace_trainee_iter=5000,
-                         save_trainee_iter=2000,
-                         memory_size=10000,
+                         gamma=0.9,
+                         replay_memory_size=10000,
+                         batch_size=50,
                          eps_min=0.1,
-                         eps_max=0.9,    # the higher, more random
-                         eps_decay_steps=2000000,
+                         eps_max=1.0,    # the higher, more random
+                         eps_decay_steps=50000,
                          checkpoint_path="checkpoint/maze.ckpt",
-                         output_graph=True
-                         )
-    run_maze()
-    # model.plot_cost()
+                         save_steps=2000,
+                         copy_steps=5000)
+    # trainie
+    run_maze(
+        n_episode=5000,
+        training_start=1000,
+        training_interval=4)
+
+    model.plot_loss()
