@@ -22,18 +22,18 @@ class Maze(gym.Env):
         x, y = np.where(self.maze == 1)
         self.user_loc = (1, 0)
 
-    def _reset(self):
+    def reset(self):
         self._build_maze()
         self.step_num = 0
         next_maze_state = np.copy(self.maze)
         next_maze_state[self.user_loc[0]][self.user_loc[1]] = 1
-        return next_maze_state.reshape(1, self.MAZE_H*self.MAZE_W)
+        next_maze_state = next_maze_state.reshape(1, self.MAZE_H*self.MAZE_W).reshape(-1)
+        return next_maze_state
 
-    def _step(self, action):
+    def step(self, action):
         self.step_num += 1
         user_loc_next = self.user_loc
 
-        print("choose action: " + str(self.action_space[action]))
         if action == 0:   # up
             user_loc_next = (max(user_loc_next[0] - 1, 0), user_loc_next[1])
         elif action == 1:   # down
@@ -48,23 +48,23 @@ class Maze(gym.Env):
             # get treasure
             print("=====================> Goal")
             reward = 1
-            continue_ = 0
+            done = True
         elif self.maze[user_loc_next[0]][user_loc_next[1]] == 2:
             # jmp to hole
             reward = -1
-            continue_ = 0
+            done = True
         else:
             reward = 0
-            continue_ = 1
+            done = False
 
         self.user_loc = user_loc_next
         next_maze_state = np.copy(self.maze)
         next_maze_state[user_loc_next[0]][user_loc_next[1]] = 1
-        next_maze_state = next_maze_state.reshape(1, self.MAZE_H*self.MAZE_W)
+        next_maze_state = next_maze_state.reshape(1, self.MAZE_H*self.MAZE_W).reshape(-1)
 
-        return next_maze_state, reward, continue_
+        return next_maze_state, reward, done
 
-    def _render(self):
+    def render(self):
         next_maze_state = np.copy(self.maze)
         next_maze_state[self.user_loc[0]][self.user_loc[1]] = 1
         print('step: ' + str(self.step_num))
