@@ -1,8 +1,12 @@
 .DS_Store
 
+# python
 *.pyc
 __pycache__
 
-# checkpoint
+# notebook
+.ipynb_checkpoints/
+
+# model checkpoint
 */checkpoint
 */maze.ckpt.*
