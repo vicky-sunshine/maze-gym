@@ -2,73 +2,57 @@ import numpy as np
 import tensorflow as tf
 import os
 
-np.random.seed(1)
-tf.set_random_seed(1)
-
 
 # Deep Q Network off-policy
 class DeepQNetwork:
     def __init__(
         self,
-        n_actions,
-        n_features,
-        learning_rate=0.01,
-        reward_decay=0.9,
-        eps_min=0.1,
-        eps_max=1,
-        eps_decay_steps=2000000,
-        memory_size=10000,
-        batch_size=32,
-        checkpoint_path=None,
-        replace_trainee_iter=300,
-        save_trainee_iter=300,
-        output_graph=False,
+        n_observation,
+        n_action,
+        learning_rate,
+        gamma,
+        replay_memory_size,
+        batch_size,
+        eps_min,
+        eps_max,
+        eps_decay_steps,
+        checkpoint_path,
+        save_steps,
+        copy_steps,
     ):
-        self.n_actions = n_actions
-        self.n_features = n_features
+        self.n_observation = n_observation
+        self.n_action = n_action
         self.learning_rate = learning_rate
-        self.gamma = reward_decay
+        self.gamma = gamma
+        self.replay_memory_size = replay_memory_size
+        self.batch_size = batch_size
         self.eps_min = eps_min
         self.eps_max = eps_max
         self.eps_decay_steps = eps_decay_steps
-        self.memory_size = memory_size
-        self.batch_size = batch_size
-        self.replace_trainee_iter = replace_trainee_iter
-        self.save_trainee_iter = save_trainee_iter
+        self.replay_memory = ReplayMemory(replay_memory_size)
+        self.checkpoint_path = checkpoint_path
+        self.save_steps = save_steps
+        self.copy_steps = copy_steps
 
-        # total learning step
-        self.learn_step_counter = 0
-
-        # initialize zero memory [s, a, r, s_]
-        self.replay_memory = ReplayMemory(self.memory_size)
-
-        # consist of [trainee_network, evaluate_net]
         self._build_dqn()
         self.sess = tf.Session()
 
-        self.checkpoint_path = checkpoint_path
-
-        self.saver = tf.train.Saver()
-        if os.path.isfile(checkpoint_path+".index"):
-            self.saver.restore(self.sess, checkpoint_path)
+        if os.path.isfile(self.checkpoint_path + ".index"):
+            self.saver.restore(self.sess, self.checkpoint_path)
         else:
-            self.sess.run(tf.global_variables_initializer())
+            self.sess.run(self.variable_init)
+            self.sess.run(self.copy_trainee_to_coach)
 
-        if output_graph:
-            # $ tensorboard --logdir=logs
-            tf.summary.FileWriter("dqn-logs/", self.sess.graph)
+        self.loss_history = []
 
-        self.cost_his = []
-
-    def _build_net(self, scope, n_observation, n_action):
+    def _q_network(self, X_state, scope, n_action):
         w_initializer = tf.variance_scaling_initializer()
         b_initializer = tf.zeros_initializer()
         with tf.variable_scope(scope):
-            x_state = tf.placeholder(tf.float32, shape=[None, self.n_features], name='s')
-            l1 = tf.layers.dense(inputs=x_state, units=60, activation=tf.nn.relu,
+            l1 = tf.layers.dense(inputs=X_state, units=20, activation=tf.nn.relu,
                                  kernel_initializer=w_initializer,
                                  bias_initializer=b_initializer, name='l1')
-            l2 = tf.layers.dense(inputs=l1, units=40, activation=tf.nn.relu,
+            l2 = tf.layers.dense(inputs=l1, units=10, activation=tf.nn.relu,
                                  kernel_initializer=w_initializer,
                                  bias_initializer=b_initializer, name='l2')
             outputs = tf.layers.dense(inputs=l2, units=n_action, activation=tf.nn.softmax,
@@ -76,105 +60,96 @@ class DeepQNetwork:
                                       bias_initializer=b_initializer, name='outputs')
             trainable_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
                                                scope=scope)
-        return x_state, outputs, trainable_vars
+        return outputs, trainable_vars
 
-    # return outputs
     def _build_dqn(self):
-        # all inputs
-        self.r = tf.placeholder(tf.float32, shape=[None, ], name='r')  # input Reward
-        self.a = tf.placeholder(tf.int32, shape=[None, ], name='a')  # input Action
+        # prepare coach network to interact with environment
+        self.coach_X_state = tf.placeholder(tf.float32, shape=[None, self.n_observation])
+        self.coach_q_values, self.coach_params = self._q_network(
+            self.coach_X_state, scope="coach", n_action=self.n_action)
 
-        # build network
-        self.coach_state_input, self.q_coach_output, coach_params = self._build_net(
-            'coach', self.n_features, self.n_actions)
-        self.trainee_state_input, self.q_trainee_output, trainee_params = self._build_net(
-            'trainee', self.n_features, self.n_actions)
+        # prepare trainne network to train for better Q (use memory)
+        self.trainee_X_state = tf.placeholder(tf.float32, shape=[None, self.n_observation])
+        self.trainee_q_values, self.trainee_params = self._q_network(
+            self.trainee_X_state, scope="trainee", n_action=self.n_action)
 
-        # training
-        with tf.variable_scope('q_coach'):
-            q_coach = self.r + self.gamma * \
-                tf.reduce_max(self.q_coach_output, axis=1,
-                              name='Qmax_s_')
-        with tf.variable_scope('q_trainee'):
-            q_trainee = tf.reduce_sum(self.q_trainee_output * tf.one_hot(self.a, self.n_actions),
-                                      axis=1, keepdims=True)
-        with tf.variable_scope('loss'):
-            error = tf.abs(q_coach - q_trainee)
+        # training pipe
+        with tf.variable_scope("train"):
+            self.trainee_X_action = tf.placeholder(tf.int32, shape=[None])
+            self.trainee_y = tf.placeholder(tf.float32, shape=[None, 1])
+            q_value = tf.reduce_sum(self.trainee_q_values * tf.one_hot(self.trainee_X_action, self.n_action),
+                                    axis=1, keepdims=True)
+            error = tf.abs(self.trainee_y - q_value)
             clipped_error = tf.clip_by_value(error, 0.0, 1.0)
             linear_error = 2 * (error - clipped_error)
             self.loss = tf.reduce_mean(tf.square(clipped_error) + linear_error)
-        with tf.variable_scope('train'):
-            self._train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
+            optimizer = tf.train.AdamOptimizer(self.learning_rate)
+            self.training_op = optimizer.minimize(self.loss)
 
-        # replace
+        # parameter initiater
+        self.variable_init = tf.global_variables_initializer()
+
+        # parameter saver
+        self.saver = tf.train.Saver()
+
+        # copy trainee to coach
         with tf.variable_scope('soft_replacement'):
-            self.coach_replace_op = [tf.assign(c, t) for c, t in zip(coach_params, trainee_params)]
+            self.copy_trainee_to_coach = [tf.assign(c, t) for c, t in zip(self.coach_params, self.trainee_params)]
 
-    def store_transition(self, s, a, r, s_, continue_):
-        # store transiyion to replay memory
-        self.replay_memory.append((s, a, r, s_, continue_))
-
-    def sample_memories(self, batch_size):
+    def _sample_memories(self, batch_size):
         cols = [[], [], [], [], []]  # state, action, reward, next_state, continue
         for memory in self.replay_memory.sample(batch_size):
             for col, value in zip(cols, memory):
                 col.append(value)
         cols = [np.array(col) for col in cols]
+        return cols[0], cols[1], cols[2].reshape(-1, 1), cols[3], cols[4].reshape(-1, 1)
 
-        s = cols[0].reshape(-1, self.n_features)
-        a = cols[1]
-        rewards = cols[2]
-        s_ = cols[3].reshape(-1, self.n_features)
-        continues = cols[4].reshape(-1, 1)
-        return s, a, rewards, s_, continues
-
-    def choose_action(self, step, observation):
-        # epsilon-greedy policy
-        epsilon = max(self.eps_min,
-                      self.eps_max - (self.eps_max - self.eps_min) * step / self.eps_decay_steps)
-        if np.random.uniform() < epsilon:
-            # random choose action for exploration
-            action = np.random.randint(0, self.n_actions)
+    def _epsilon_greedy(self, q_values, global_step):
+        # use epsilon greedy policy
+        epsilon = max(self.eps_min, self.eps_max -
+                      (self.eps_max - self.eps_min) * global_step / self.eps_decay_steps)
+        if np.random.rand() < epsilon:
+            return np.random.randint(self.n_action)  # random action
         else:
-            # use coach network to choose action
-            actions_value = self.sess.run(self.q_coach_output, feed_dict={
-                                          self.coach_state_input: observation})
-            action = np.argmax(actions_value)
+            return np.argmax(q_values)  # optimal action
 
-        return action
+    def choose_action(self, state, global_step):
+        q_values = self.sess.run(self.trainee_q_values, feed_dict={self.trainee_X_state: [state]})
+        action = self._epsilon_greedy(q_values, global_step)
+        return action, q_values.max()
 
-    def learn(self):
-        # check to replace trainee parameters
-        if self.learn_step_counter % self.replace_trainee_iter == 0:
-            self.sess.run(self.coach_replace_op)
-            print('\ntrainee_params_replaced\n')
-        if self.learn_step_counter % self.save_trainee_iter == 0:
-            self.save_parameter()
-            print('\ntrainee_params_saved\n')
-
+    def learn(self, global_step):
+        # Sample memories and use the target DQN to produce the target Q-Value
         X_state_val, X_action_val, rewards, X_next_state_val, continues = (
-            self.sample_memories(self.batch_size))
-        _, cost = self.sess.run(
-            [self._train_op, self.loss],
-            feed_dict={
-                self.trainee_state_input: X_state_val,
-                self.a: X_action_val,
-                self.r: rewards,
-                self.coach_state_input: X_next_state_val,
-            })
+            self._sample_memories(self.batch_size))
+        next_q_values = self.sess.run(self.coach_q_values, feed_dict={
+                                      self.coach_X_state: X_next_state_val})
+        max_next_q_values = np.max(next_q_values, axis=1, keepdims=True)
+        y_val = rewards + continues * self.gamma * max_next_q_values
 
-        self.cost_his.append(cost)
+        # Train the online DQN
+        _, loss_val = self.sess.run([self.training_op, self.loss], feed_dict={
+                                    self.trainee_X_state: X_state_val,
+                                    self.trainee_X_action: X_action_val,
+                                    self.trainee_y: y_val})
 
-        self.learn_step_counter += 1
-        print("trainee learning step:" + str(self.learn_step_counter))
+        # Regularly copy the online DQN to the target DQN
+        if global_step % self.copy_steps == 0:
+            print("copy_trainee_to_coach")
+            self.sess.run(self.copy_trainee_to_coach)
 
-    def save_parameter(self):
-        self.saver.save(self.sess, self.checkpoint_path)
+        # And save regularly
+        if global_step % self.save_steps == 0:
+            print("save parameter")
+            self.saver.save(self.sess, self.checkpoint_path)
 
-    def plot_cost(self):
+        self.loss_history.append(loss_val)
+        return loss_val
+
+    def plot_loss(self):
         import matplotlib.pyplot as plt
-        plt.plot(np.arange(len(self.cost_his)), self.cost_his)
-        plt.ylabel('Cost')
+        plt.plot(np.arange(len(self.loss_history)), self.loss_history)
+        plt.ylabel('Loss')
         plt.xlabel('training steps')
         plt.show()
 
